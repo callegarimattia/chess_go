@@ -1,0 +1,372 @@
+epic: chess-engine
+feature: chess engine written in go
+date: "2026-02-21"
+research_depth: deep-dive
+walking_skeleton: true
+
+personas:
+  - id: P1
+    name: Marco Rossi
+    role: Library integrator
+    goal: Import chess_go as a Go package with a clean API
+    technical_level: high
+    entry_point: pkg.go.dev or GitHub README
+
+  - id: P2
+    name: Sofia Chen
+    role: Human TUI player
+    goal: Play a casual chess game in the terminal against the engine
+    technical_level: medium
+    entry_point: "$ chess-go"
+
+  - id: P3
+    name: Daniel Okafor
+    role: Engine developer
+    goal: Tune search/evaluation, benchmark NPS, validate UCI compliance
+    technical_level: expert
+    entry_point: stdin/stdout UCI pipe
+
+  - id: P4
+    name: Priya Nair
+    role: Casual web player
+    goal: Play chess in a browser via SSR GUI
+    technical_level: low
+    entry_point: "http://localhost:8080"
+
+journeys:
+  - persona: P1
+    name: library-integration
+    stages:
+      - name: Discover
+        action: Finds package on pkg.go.dev, reads README
+        touchpoint: godoc / README
+        artifact: null
+        emotion: Skeptical
+        emotion_score: 2
+        risks:
+          - Unclear or incomplete API documentation
+      - name: Setup
+        action: "go get chess_go, reads godoc examples"
+        touchpoint: terminal + editor
+        artifact: go.mod updated
+        emotion: Cautious
+        emotion_score: 3
+        risks:
+          - Missing usage examples
+      - name: First Move
+        action: "Calls game.Move(\"e2e4\") in test file"
+        touchpoint: editor / test
+        artifact: Move struct returned
+        emotion: Relieved
+        emotion_score: 4
+        risks:
+          - Panic on illegal move input
+      - name: Integrate
+        action: Wires chess_go into tournament manager game loop
+        touchpoint: own codebase
+        artifact: GameState embedded
+        emotion: Confident
+        emotion_score: 4
+        risks:
+          - Global state leaking between games
+          - Lack of concurrency safety documentation
+      - name: Trust
+        action: Ships tournament manager to production
+        touchpoint: production
+        artifact: PGN export
+        emotion: Trusting
+        emotion_score: 5
+        risks:
+          - Silent correctness bugs in edge cases (en passant, castling through check)
+    emotional_arc:
+      shape: ascending
+      low_point: Discover (score 2)
+      high_point: Trust (score 5)
+      transitions:
+        - from: Skeptical
+          to: Cautious
+          trigger: Package exists, documentation visible
+        - from: Cautious
+          to: Relieved
+          trigger: First legal move returns correctly
+        - from: Relieved
+          to: Confident
+          trigger: Clean integration, no global state issues
+        - from: Confident
+          to: Trusting
+          trigger: Production game completes correctly
+
+  - persona: P2
+    name: tui-player
+    stages:
+      - name: Launch
+        action: "Runs $ chess-go in terminal"
+        touchpoint: terminal
+        artifact: null
+        emotion: Curious
+        emotion_score: 3
+        risks:
+          - Garbled board render in unsupported terminal
+      - name: Orientation
+        action: Reads ASCII board, understands coordinates
+        touchpoint: TUI board render
+        artifact: Board display
+        emotion: Oriented
+        emotion_score: 4
+        risks:
+          - Confusing coordinate system (a1 bottom-left vs top-left)
+      - name: First Move
+        action: "Types \"e2e4\" at prompt, sees engine respond"
+        touchpoint: move prompt
+        artifact: Updated board
+        emotion: Engaged
+        emotion_score: 4
+        risks:
+          - Illegal move message is cryptic
+          - No input feedback while engine thinks
+      - name: Mid-Game
+        action: Plays 20+ moves, references move history
+        touchpoint: turn loop
+        artifact: Move history sidebar
+        emotion: Tense/Focused
+        emotion_score: 5
+        risks:
+          - Engine hangs on complex position
+          - Board state corrupted after special moves
+      - name: End
+        action: Sees checkmate or draw result, saves PGN
+        touchpoint: result display
+        artifact: PGN file
+        emotion: Satisfied
+        emotion_score: 5
+        risks:
+          - Game ends without clear result message
+          - PGN save fails silently
+    emotional_arc:
+      shape: ascending-with-peak
+      low_point: Launch (score 3)
+      high_point: End (score 5)
+
+  - persona: P3
+    name: engine-developer
+    stages:
+      - name: Bootstrap
+        action: "$ go build ./cmd/chess-go, binary produced"
+        touchpoint: terminal / IDE
+        artifact: chess-go binary
+        emotion: Pragmatic
+        emotion_score: 3
+        risks:
+          - Build fails on clean checkout
+      - name: UCI Handshake
+        action: Pipes uci/isready commands, validates responses
+        touchpoint: stdin/stdout pipe
+        artifact: UCI session transcript
+        emotion: Validating
+        emotion_score: 3
+        risks:
+          - Missing required UCI commands (uci, isready, ucinewgame, position, go, stop, quit)
+      - name: Position Test
+        action: Sends position FEN + go movetime 1000, reads bestmove
+        touchpoint: Chess GUI (Arena / Cute Chess)
+        artifact: "bestmove e2e4"
+        emotion: Testing
+        emotion_score: 4
+        risks:
+          - Wrong bestmove in known test positions
+          - Engine exceeds time limit
+      - name: Benchmark
+        action: Runs perft suite, measures NPS
+        touchpoint: benchmark harness
+        artifact: NPS report
+        emotion: Iterating
+        emotion_score: 4
+        risks:
+          - Move generation count wrong (perft mismatch)
+          - Too slow for practical play
+      - name: Tune
+        action: Adjusts eval weights, reruns benchmark
+        touchpoint: source code
+        artifact: Tuned binary
+        emotion: Satisfied
+        emotion_score: 5
+        risks:
+          - Eval regression after tuning
+    emotional_arc:
+      shape: gradually-ascending
+      low_point: Bootstrap (score 3)
+      high_point: Tune (score 5)
+
+  - persona: P4
+    name: web-player
+    stages:
+      - name: Visit
+        action: Opens browser to localhost:8080
+        touchpoint: browser
+        artifact: null
+        emotion: Casual
+        emotion_score: 3
+        risks:
+          - Server not running, blank page
+      - name: Start Game
+        action: Clicks "New Game" button
+        touchpoint: SSR page reload
+        artifact: Game session ID
+        emotion: Ready
+        emotion_score: 4
+        risks:
+          - Session not persisted across requests
+      - name: Make Move
+        action: Clicks piece, clicks destination square
+        touchpoint: "POST /move"
+        artifact: Updated board HTML
+        emotion: Excited
+        emotion_score: 5
+        risks:
+          - Move rejected with no clear feedback
+          - Double-click triggers two moves
+      - name: Mid-Game
+        action: Plays multiple turns
+        touchpoint: SSR page renders
+        artifact: Move history
+        emotion: Engaged
+        emotion_score: 4
+        risks:
+          - Engine response lag > 2s feels broken
+      - name: End
+        action: Sees result, offered rematch
+        touchpoint: result page
+        artifact: Final position
+        emotion: Complete
+        emotion_score: 4
+        risks:
+          - No rematch option
+    emotional_arc:
+      shape: ascending-plateau
+      low_point: Visit (score 3)
+      high_point: Make Move (score 5)
+
+shared_artifacts:
+  - id: SA-01
+    name: FEN string
+    description: Canonical position encoding (Forsyth-Edwards Notation)
+    producer: FEN parser / game loop
+    consumers: [board-state, engine-search, TUI-renderer, SSR-renderer, UCI-handler]
+    format: "string, e.g. rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"
+    validation: standard FEN rules (6 fields, valid piece placement, valid castling rights)
+
+  - id: SA-02
+    name: Move notation (UCI)
+    description: Move in UCI format (from-square + to-square + optional promotion)
+    producer: TUI input / GUI POST / engine search
+    consumers: [move-validator, board-state, PGN-recorder, UCI-handler]
+    format: "string, e.g. e2e4, e7e8q (promotion)"
+
+  - id: SA-03
+    name: Move notation (SAN)
+    description: Standard Algebraic Notation for human display
+    producer: move-formatter
+    consumers: [TUI-display, SSR-display, PGN-recorder]
+    format: "string, e.g. e4, Nf3, O-O, Bxe5+"
+
+  - id: SA-04
+    name: GameState
+    description: Complete game state including board, active color, castling rights, en passant, clocks
+    producer: game-loop
+    consumers: [move-generator, engine-search, TUI-renderer, SSR-renderer, result-detector]
+    format: Go struct
+
+  - id: SA-05
+    name: PGN record
+    description: Portable Game Notation — complete game transcript
+    producer: PGN-recorder
+    consumers: [export, replay, display]
+    format: "standard PGN text"
+
+  - id: SA-06
+    name: Engine response
+    description: Best move and optional score/depth info
+    producer: engine-search
+    consumers: [UCI-handler, game-loop, TUI-display]
+    format: "UCI: bestmove e2e4 [ponder e7e5] / info depth N score cp N nodes N nps N pv ..."
+
+  - id: SA-07
+    name: Time control
+    description: Remaining time and increment per side
+    producer: TUI/GUI/UCI-handler
+    consumers: [engine-search, time-manager]
+    format: "UCI go wtime N btime N winc N binc N / movetime N"
+
+error_paths:
+  - id: EP-01
+    trigger: Illegal move input
+    affected_personas: [P1, P2, P4]
+    expected_behavior: Return typed ErrIllegalMove; never panic; display human-readable message
+    recovery: Prompt user to try again; show legal moves on request
+
+  - id: EP-02
+    trigger: Invalid FEN string
+    affected_personas: [P1, P3]
+    expected_behavior: Return ErrInvalidFEN with parse position; log to stderr in UCI mode
+    recovery: Reject position; engine emits bestmove 0000 (null move) as safe fallback
+
+  - id: EP-03
+    trigger: Engine exceeds time limit
+    affected_personas: [P2, P3, P4]
+    expected_behavior: Always emit bestmove within time + 50ms grace; use best move found so far
+    recovery: Display [Engine: time limit reached] in TUI/GUI
+
+  - id: EP-04
+    trigger: Checkmate / stalemate not detected
+    affected_personas: [P1, P2, P3, P4]
+    expected_behavior: Game loop detects terminal positions before prompting for next move
+    recovery: Display result clearly; prevent further moves
+
+  - id: EP-05
+    trigger: Castling through check attempted
+    affected_personas: [P1, P2, P4]
+    expected_behavior: Move generator excludes castling through/into check; returns ErrIllegalMove
+    recovery: Same as EP-01
+
+  - id: EP-06
+    trigger: Threefold repetition / 50-move rule
+    affected_personas: [P1, P2, P4]
+    expected_behavior: Game loop detects draw conditions, offers or auto-claims draw
+    recovery: Display draw reason; end game cleanly
+
+walking_skeleton:
+  description: >
+    Feature 0 — validates full architecture pipeline end-to-end.
+    Input: starting position (FEN). Engine: computes and returns a legal move.
+    Output: displayed in TUI. No AI quality required, only correctness.
+  pipeline:
+    - step: 1
+      name: Parse starting position
+      component: chess package (FEN parser)
+      input: starting FEN string
+      output: valid GameState struct
+    - step: 2
+      name: Generate legal moves
+      component: chess package (move generator)
+      input: GameState
+      output: []Move (at least 20 in starting position)
+    - step: 3
+      name: Select move (random)
+      component: engine (minimal — random legal move)
+      input: []Move
+      output: Move
+    - step: 4
+      name: Apply move
+      component: chess package (game loop)
+      input: GameState + Move
+      output: updated GameState
+    - step: 5
+      name: Display board
+      component: TUI renderer
+      input: GameState
+      output: ASCII board in terminal
+  acceptance: >
+    Given the starting position,
+    When the skeleton runs,
+    Then a legal move is selected and the updated board is displayed in the terminal
+    without panic or error.
