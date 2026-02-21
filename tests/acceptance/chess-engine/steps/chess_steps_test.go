@@ -20,9 +20,7 @@ package acceptance_test
 import (
 	"strings"
 	"testing"
-	"time"
 
-	// Production package — uncomment once internal/chess is implemented.
 	chess "chess_go/internal/chess"
 )
 
@@ -900,13 +898,6 @@ func mustParseUCI_helper(t *testing.T, uci string) {
 	// }
 	// t.Fatalf("move %q not found in legal moves", uci)
 	// panic("unreachable")
-}
-
-// measureDuration runs fn and returns elapsed time.
-func measureDuration(fn func()) time.Duration {
-	start := time.Now()
-	fn()
-	return time.Since(start)
 }
 
 // containsSubstring is a helper used throughout the step files.

@@ -9,12 +9,12 @@ var ErrIllegalMove = errors.New("illegal move")
 type GameResult uint8
 
 const (
-	InProgress              GameResult = 0
-	WhiteWins               GameResult = 1
-	BlackWins               GameResult = 2
-	Stalemate               GameResult = 3
-	DrawFiftyMove           GameResult = 4
-	DrawThreefoldRepetition GameResult = 5
+	InProgress               GameResult = 0
+	WhiteWins                GameResult = 1
+	BlackWins                GameResult = 2
+	Stalemate                GameResult = 3
+	DrawFiftyMove            GameResult = 4
+	DrawThreefoldRepetition  GameResult = 5
 	DrawInsufficientMaterial GameResult = 6
 )
 
@@ -118,19 +118,21 @@ func applyMove(s GameState, m Move) GameState {
 
 	// Castling: move the rook.
 	if movingPiece == WhiteKing && m.From == E1 {
-		if m.To == G1 {
+		switch m.To {
+		case G1:
 			ns.Board[H1] = NoPiece
 			ns.Board[F1] = WhiteRook
-		} else if m.To == C1 {
+		case C1:
 			ns.Board[A1] = NoPiece
 			ns.Board[D1] = WhiteRook
 		}
 	}
 	if movingPiece == BlackKing && m.From == E8 {
-		if m.To == G8 {
+		switch m.To {
+		case G8:
 			ns.Board[H8] = NoPiece
 			ns.Board[F8] = BlackRook
-		} else if m.To == C8 {
+		case C8:
 			ns.Board[A8] = NoPiece
 			ns.Board[D8] = BlackRook
 		}

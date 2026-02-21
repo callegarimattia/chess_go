@@ -1,6 +1,6 @@
-# Binaries
-chess-go
-chess-server
+# Binaries (root-level built outputs only)
+/chess-go
+/chess-server
 bin/
 
 # Test artifacts

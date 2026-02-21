@@ -12,8 +12,8 @@ import (
 )
 
 func main() {
-	game := tui.NewGame(os.Stdin, os.Stdout, func(g chess.Game, tc engine.TimeControl) chess.Move {
-		tc = engine.TimeControl{MoveTime: 100 * time.Millisecond}
+	game := tui.NewGame(os.Stdin, os.Stdout, func(g chess.Game, _ engine.TimeControl) chess.Move {
+		tc := engine.TimeControl{MoveTime: 100 * time.Millisecond}
 		return engine.Search(g, tc, os.Stderr).BestMove
 	})
 	game.Run()
