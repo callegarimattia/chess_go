@@ -1,0 +1,189 @@
+#!/usr/bin/env bash
+# pre-push hook — full CI pipeline (mirrors CI stages 1-8)
+# Runs before pushing to any remote. Blocks push on failure.
+#
+# Install: make install-hooks
+# Bypass:  git push --no-verify  (emergencies only)
+#
+# Skipped in pre-push (too slow / CI-only):
+#   - Cross-platform builds  (CI matrix handles this)
+#   - Benchmark regression   (requires baseline artifact from CI)
+#   - Depth-5 perft          (run manually: make perft-deep)
+
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+PASS=0
+FAIL=0
+SKIP=0
+
+step() {
+  printf "\n${BOLD}==> %s${NC}\n" "$1"
+}
+
+ok() {
+  printf "    ${GREEN}✓${NC} %s\n" "$1"
+  PASS=$((PASS + 1))
+}
+
+fail() {
+  printf "    ${RED}✗${NC} %s\n" "$1"
+  FAIL=$((FAIL + 1))
+}
+
+skip() {
+  printf "    ${YELLOW}~${NC} %s (skipped)\n" "$1"
+  SKIP=$((SKIP + 1))
+}
+
+# Read push info from stdin (remote, url, local ref, local sha, remote ref, remote sha)
+while read local_ref local_sha remote_ref remote_sha; do
+  # Only enforce full suite when pushing to main or a PR targeting main
+  if [[ "$remote_ref" != "refs/heads/main" ]] && [[ "$local_ref" != "refs/heads/main" ]]; then
+    echo "Pushing to non-main branch — running abbreviated checks only."
+    ABBREVIATED=true
+  else
+    ABBREVIATED=false
+  fi
+done
+
+ABBREVIATED=${ABBREVIATED:-false}
+
+echo ""
+echo "pre-push: running CI pipeline locally"
+echo "Target: ${remote_ref:-unknown}"
+echo ""
+
+# ─── Stage 1: Format ──────────────────────────────────────────────────────────
+
+step "Stage 1 — gofmt"
+UNFORMATTED=$(gofmt -l . 2>/dev/null || true)
+if [ -n "$UNFORMATTED" ]; then
+  fail "unformatted files:"
+  echo "$UNFORMATTED" | sed 's/^/      /'
+else
+  ok "all files formatted"
+fi
+
+# ─── Stage 2: Vet ─────────────────────────────────────────────────────────────
+
+step "Stage 2 — go vet"
+if go vet ./... 2>&1; then
+  ok "go vet passed"
+else
+  fail "go vet failed"
+fi
+
+# ─── Stage 3: Lint ────────────────────────────────────────────────────────────
+
+step "Stage 3 — golangci-lint"
+if command -v golangci-lint >/dev/null 2>&1; then
+  if golangci-lint run --timeout=5m 2>&1; then
+    ok "golangci-lint passed"
+  else
+    fail "golangci-lint failed"
+  fi
+else
+  skip "golangci-lint not found (install: https://golangci-lint.run/usage/install/)"
+fi
+
+# ─── Stage 4: Tests + Coverage ────────────────────────────────────────────────
+
+step "Stage 4 — go test -race + coverage"
+if go test -race -coverprofile=coverage.out -covermode=atomic -timeout=5m ./... 2>&1; then
+  ok "tests passed"
+
+  # Coverage gate for internal/chess
+  COVERAGE=$(go tool cover -func=coverage.out \
+    | awk '/chess_go\/internal\/chess/ && /total:/ {print $3}' \
+    | tr -d '%')
+
+  if [ -z "$COVERAGE" ]; then
+    skip "internal/chess not yet implemented — skipping coverage gate"
+  else
+    PASS_COV=$(awk -v cov="$COVERAGE" 'BEGIN { print (cov >= 90.0) ? "yes" : "no" }')
+    if [ "$PASS_COV" = "yes" ]; then
+      ok "chess package coverage: ${COVERAGE}% >= 90%"
+    else
+      fail "chess package coverage: ${COVERAGE}% < 90% (NFR-09)"
+    fi
+  fi
+else
+  fail "tests failed"
+fi
+
+# ─── Stage 5: Perft (depths 1-4) ──────────────────────────────────────────────
+
+step "Stage 5 — perft validation (depths 1-4)"
+PERFT_OUT=$(go test -run TestPerft -tags slow -v -timeout=10m ./internal/chess/... 2>&1 || true)
+if echo "$PERFT_OUT" | grep -q "no Go files\|no test files\|build constraints exclude"; then
+  skip "internal/chess not yet implemented"
+elif echo "$PERFT_OUT" | grep -q "FAIL"; then
+  fail "perft mismatch detected"
+  echo "$PERFT_OUT" | grep -E "FAIL|--- FAIL" | sed 's/^/      /'
+else
+  ok "perft depths 1-4 correct"
+fi
+
+# ─── Stage 6: Acceptance tests ────────────────────────────────────────────────
+
+step "Stage 6 — acceptance tests"
+if go test -v -timeout=5m ./tests/acceptance/... 2>&1; then
+  ok "acceptance tests passed"
+else
+  fail "acceptance tests failed"
+fi
+
+# ─── Stage 7: Quick benchmark (local — no regression comparison) ──────────────
+
+if [ "$ABBREVIATED" = "false" ]; then
+  step "Stage 7 — benchmarks (single run, no regression comparison)"
+  BENCH_OUT=$(go test -bench=. -benchmem -count=1 -benchtime=1s -timeout=5m ./... 2>&1 || true)
+  if echo "$BENCH_OUT" | grep -q "no Go files\|no test files"; then
+    skip "no benchmarks found yet"
+  else
+    echo "$BENCH_OUT" | grep -E "^Benchmark|^ok|^FAIL" | sed 's/^/    /'
+    ok "benchmarks ran (use 'make bench-compare' for regression analysis)"
+  fi
+else
+  skip "Stage 7 — benchmarks (non-main branch push)"
+fi
+
+# ─── Stage 8: Build (current platform only) ───────────────────────────────────
+
+step "Stage 8 — build (current platform)"
+if go build ./cmd/... 2>&1; then
+  ok "binaries compile"
+else
+  fail "build failed"
+fi
+
+# ─── Result ───────────────────────────────────────────────────────────────────
+
+echo ""
+echo "─────────────────────────────────────────"
+printf "  ${GREEN}✓ passed${NC}:  %d\n" "$PASS"
+[ "$SKIP" -gt 0 ] && printf "  ${YELLOW}~ skipped${NC}: %d\n" "$SKIP"
+[ "$FAIL" -gt 0 ] && printf "  ${RED}✗ failed${NC}:  %d\n" "$FAIL"
+echo "─────────────────────────────────────────"
+
+if [ "$FAIL" -gt 0 ]; then
+  echo ""
+  printf "${RED}pre-push FAILED${NC} — push blocked.\n"
+  echo "Fix the issues above and try again."
+  echo "Emergency bypass: git push --no-verify"
+  echo ""
+  exit 1
+fi
+
+echo ""
+printf "${GREEN}pre-push OK${NC} — pushing.\n"
+echo ""

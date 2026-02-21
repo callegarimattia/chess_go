@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# pre-commit hook — fast checks only (< 30s target)
+# Mirrors CI stages 1-3: format, vet, lint
+# Plus a quick build to catch compile errors before they reach CI.
+#
+# Install: make install-hooks
+# Bypass:  git commit --no-verify  (emergencies only)
+
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+PASS=0
+FAIL=0
+
+step() {
+  printf "${BOLD}==> %s${NC}\n" "$1"
+}
+
+ok() {
+  printf "    ${GREEN}✓${NC} %s\n" "$1"
+  PASS=$((PASS + 1))
+}
+
+fail() {
+  printf "    ${RED}✗${NC} %s\n" "$1"
+  FAIL=$((FAIL + 1))
+}
+
+warn() {
+  printf "    ${YELLOW}~${NC} %s\n" "$1"
+}
+
+# ─── Only check staged Go files ───────────────────────────────────────────────
+
+STAGED_GO=$(git diff --cached --name-only --diff-filter=ACM | grep '\.go$' || true)
+
+if [ -z "$STAGED_GO" ]; then
+  echo "No staged Go files — skipping pre-commit checks."
+  exit 0
+fi
+
+echo ""
+echo "pre-commit: running checks on staged Go files"
+echo ""
+
+# ─── Stage 1: Format ──────────────────────────────────────────────────────────
+
+step "gofmt"
+UNFORMATTED=$(echo "$STAGED_GO" | xargs gofmt -l 2>/dev/null || true)
+if [ -n "$UNFORMATTED" ]; then
+  fail "unformatted files (run: gofmt -w .):"
+  echo "$UNFORMATTED" | sed 's/^/      /'
+else
+  ok "all staged files formatted"
+fi
+
+# ─── Stage 2: Vet ─────────────────────────────────────────────────────────────
+
+step "go vet"
+if go vet ./... 2>&1; then
+  ok "go vet passed"
+else
+  fail "go vet failed"
+fi
+
+# ─── Stage 3: Lint ────────────────────────────────────────────────────────────
+
+step "golangci-lint"
+if command -v golangci-lint >/dev/null 2>&1; then
+  if golangci-lint run --timeout=3m --new-from-rev=HEAD~1 2>&1; then
+    ok "golangci-lint passed"
+  else
+    fail "golangci-lint failed"
+  fi
+else
+  warn "golangci-lint not found — skipping (install: https://golangci-lint.run/usage/install/)"
+fi
+
+# ─── Quick build (compile check) ─────────────────────────────────────────────
+
+step "go build"
+if go build ./... 2>&1; then
+  ok "build succeeded"
+else
+  fail "build failed"
+fi
+
+# ─── Result ───────────────────────────────────────────────────────────────────
+
+echo ""
+if [ "$FAIL" -gt 0 ]; then
+  printf "${RED}pre-commit FAILED${NC} (%d check(s) failed, %d passed)\n" "$FAIL" "$PASS"
+  echo "Fix the issues above, re-stage your changes, and try again."
+  echo "Emergency bypass: git commit --no-verify"
+  echo ""
+  exit 1
+fi
+
+printf "${GREEN}pre-commit OK${NC} (%d checks passed)\n" "$PASS"
+echo ""
