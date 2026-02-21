@@ -1,0 +1,26 @@
+# Binaries
+chess-go
+chess-server
+bin/
+
+# Test artifacts
+coverage.out
+bench-baseline.txt
+bench-current.txt
+
+# Go build cache
+*.test
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# nWave internal tooling
+.nwave/
+.claude/
