@@ -1,0 +1,294 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write   # Required to create GitHub Releases and upload assets
+
+env:
+  GO_VERSION: '1.22'
+  GOLANGCI_LINT_VERSION: 'v1.58.0'
+
+jobs:
+  # ─── Gate: Full CI Suite ──────────────────────────────────────────────────────
+  # Re-run the complete CI pipeline on the tagged commit before building release
+  # artifacts. This ensures a broken tag does not produce a release.
+
+  format:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: Check gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "The following files need formatting:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+  vet:
+    name: Vet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: go.sum
+      - run: go vet ./...
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: go.sum
+      - name: Cache golangci-lint
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/golangci-lint
+          key: golangci-lint-${{ env.GOLANGCI_LINT_VERSION }}-${{ runner.os }}
+      - name: Install golangci-lint
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh \
+            | sh -s -- -b $(go env GOPATH)/bin ${{ env.GOLANGCI_LINT_VERSION }}
+      - run: golangci-lint run --timeout=5m
+      - name: Run govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+  test-coverage:
+    name: Test + Coverage
+    runs-on: ubuntu-latest
+    needs: [format, vet, lint]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: go.sum
+      - name: Run tests with race detector and coverage
+        run: |
+          go test -race \
+            -coverprofile=coverage.out \
+            -covermode=atomic \
+            -timeout=5m \
+            ./...
+      - name: Enforce chess package coverage >= 90%
+        run: |
+          COVERAGE=$(go tool cover -func=coverage.out \
+            | grep 'chess_go/internal/chess' \
+            | awk '/total:/{print $3}' \
+            | tr -d '%')
+          if [ -z "$COVERAGE" ]; then
+            echo "ERROR: Could not extract chess package coverage."
+            exit 1
+          fi
+          echo "chess package coverage: ${COVERAGE}%"
+          PASS=$(awk -v cov="$COVERAGE" 'BEGIN { print (cov >= 90.0) ? "yes" : "no" }')
+          if [ "$PASS" != "yes" ]; then
+            echo "FAIL: chess package coverage ${COVERAGE}% is below 90% (NFR-09)."
+            exit 1
+          fi
+
+  perft:
+    name: Perft Validation
+    runs-on: ubuntu-latest
+    needs: [test-coverage]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: go.sum
+      - name: Run perft tests (depths 1-4)
+        run: |
+          go test \
+            -run TestPerft \
+            -tags slow \
+            -v \
+            -timeout=10m \
+            ./internal/chess/...
+
+  acceptance:
+    name: Acceptance Tests
+    runs-on: ubuntu-latest
+    needs: [test-coverage]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: go.sum
+      - run: go test -v -timeout=5m ./tests/acceptance/...
+
+  benchmarks:
+    name: Benchmarks
+    runs-on: ubuntu-latest
+    needs: [acceptance, perft]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: go.sum
+      - name: Install benchstat
+        run: go install golang.org/x/perf/cmd/benchstat@latest
+      - name: Run benchmarks
+        run: |
+          go test \
+            -bench=. \
+            -benchmem \
+            -count=3 \
+            -benchtime=3s \
+            -timeout=10m \
+            ./... | tee bench-current.txt
+      - name: Validate NPS target
+        run: |
+          NPS_LINE=$(grep -E 'BenchmarkSearch.*nps' bench-current.txt | head -1 || true)
+          if [ -z "$NPS_LINE" ]; then
+            echo "INFO: BenchmarkSearch nps metric not found — skipping NPS check."
+            exit 0
+          fi
+          NPS=$(echo "$NPS_LINE" | awk '{for(i=1;i<=NF;i++) if ($i=="nps") {print $(i-1); break}}' | tr -d ',')
+          echo "Measured NPS: $NPS"
+          PASS=$(awk -v nps="$NPS" 'BEGIN { print (nps >= 100000) ? "yes" : "no" }')
+          if [ "$PASS" != "yes" ]; then
+            echo "FAIL: Engine NPS $NPS is below 100,000 (NFR-01)."
+            exit 1
+          fi
+
+  # ─── Release Binary Build ─────────────────────────────────────────────────────
+
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    needs: [benchmarks]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # Full history needed for changelog generation
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: go.sum
+
+      - name: Extract tag name
+        id: tag
+        run: echo "TAG_NAME=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Determine pre-release
+        id: prerelease
+        run: |
+          TAG="${{ steps.tag.outputs.TAG_NAME }}"
+          if echo "$TAG" | grep -qE '-(alpha|beta|rc)'; then
+            echo "IS_PRERELEASE=true" >> $GITHUB_OUTPUT
+          else
+            echo "IS_PRERELEASE=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build release binaries
+        env:
+          TAG_NAME: ${{ steps.tag.outputs.TAG_NAME }}
+          CGO_ENABLED: '0'
+        run: |
+          mkdir -p dist
+
+          # Build flags: strip debug info, remove filesystem paths, inject version
+          LDFLAGS="-s -w -X main.version=${TAG_NAME}"
+
+          build() {
+            local GOOS=$1
+            local GOARCH=$2
+            local CMD=$3
+            local EXT=${4:-""}
+
+            local OUTPUT="dist/${CMD}-${GOOS}-${GOARCH}${EXT}"
+            echo "Building ${OUTPUT}..."
+            GOOS=$GOOS GOARCH=$GOARCH go build \
+              -ldflags="${LDFLAGS}" \
+              -trimpath \
+              -o "${OUTPUT}" \
+              "./cmd/${CMD}/..."
+          }
+
+          # chess-go (TUI binary)
+          build linux   amd64 chess-go
+          build linux   arm64 chess-go
+          build darwin  amd64 chess-go
+          build darwin  arm64 chess-go
+          build windows amd64 chess-go .exe
+
+          # chess-server (SSR binary)
+          build linux   amd64 chess-server
+          build linux   arm64 chess-server
+          build darwin  amd64 chess-server
+          build darwin  arm64 chess-server
+          build windows amd64 chess-server .exe
+
+          echo ""
+          echo "=== Built artifacts ==="
+          ls -lh dist/
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS.txt
+          echo ""
+          echo "=== SHA256 checksums ==="
+          cat SHA256SUMS.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.TAG_NAME }}
+          name: ${{ steps.tag.outputs.TAG_NAME }}
+          prerelease: ${{ steps.prerelease.outputs.IS_PRERELEASE }}
+          generate_release_notes: true
+          files: |
+            dist/chess-go-linux-amd64
+            dist/chess-go-linux-arm64
+            dist/chess-go-darwin-amd64
+            dist/chess-go-darwin-arm64
+            dist/chess-go-windows-amd64.exe
+            dist/chess-server-linux-amd64
+            dist/chess-server-linux-arm64
+            dist/chess-server-darwin-amd64
+            dist/chess-server-darwin-arm64
+            dist/chess-server-windows-amd64.exe
+            dist/SHA256SUMS.txt
+          body: |
+            ## Installation
+
+            Download the binary for your platform from the assets below.
+
+            | Platform | chess-go (TUI) | chess-server (SSR) |
+            |----------|---------------|-------------------|
+            | Linux amd64 | `chess-go-linux-amd64` | `chess-server-linux-amd64` |
+            | Linux arm64 | `chess-go-linux-arm64` | `chess-server-linux-arm64` |
+            | macOS amd64 | `chess-go-darwin-amd64` | `chess-server-darwin-amd64` |
+            | macOS arm64 (M-series) | `chess-go-darwin-arm64` | `chess-server-darwin-arm64` |
+            | Windows amd64 | `chess-go-windows-amd64.exe` | `chess-server-windows-amd64.exe` |
+
+            **Verify integrity**: download `SHA256SUMS.txt` and run `sha256sum -c SHA256SUMS.txt`.
+
+            **Rollback**: previous release binaries remain available on prior release pages.
+
+            ---
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

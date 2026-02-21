@@ -1,0 +1,42 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: none
+  enable:
+    - errcheck       # Check for unhandled errors
+    - govet          # Go vet checks (shadow, printf, etc.)
+    - ineffassign    # Detect ineffectual assignments
+    - staticcheck    # Comprehensive static analysis (SA, S, ST, S families, includes gosimple)
+    - unused         # Find unused code
+
+linters-settings:
+  staticcheck:
+    checks:
+      - "all"
+      - "-SA1019"   # Allow deprecated usage (temporary during development)
+
+  errcheck:
+    check-type-assertions: true
+    check-blank: false   # Blank identifier assignments are acceptable in tests
+
+issues:
+  exclude-rules:
+    # Test files: allow unused variables (common in table-driven tests)
+    - path: "_test.go"
+      linters:
+        - unused
+        - ineffassign
+
+    # Acceptance test package uses some helpers that may not all be called yet
+    - path: "tests/acceptance/.*_test\\.go"
+      linters:
+        - unused
+        - errcheck
+
+  # Do not limit the number of issues per linter
+  max-issues-per-linter: 0
+  max-same-issues: 0
