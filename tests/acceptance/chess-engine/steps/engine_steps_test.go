@@ -526,7 +526,7 @@ func extractBestmove(lines []string) string {
 // Placeholder — uncomment and adapt once chess.Move is available.
 //
 //nolint:unused
-func assertMoveIsLegal_helper(t *testing.T, uci string) {
+func assertMoveIsLegalHelper(t *testing.T, uci string) {
 	t.Helper()
 	_ = uci
 }

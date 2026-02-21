@@ -874,7 +874,7 @@ func TestPerft_KiwipeteDepth4(t *testing.T) {
 // Uncomment and use once internal/chess is implemented.
 //
 //nolint:unused
-func perft_helper(t *testing.T, depth int, fen string) int {
+func perftHelper(t *testing.T, depth int, fen string) int {
 	t.Helper()
 	_ = fen
 	_ = depth
@@ -888,7 +888,7 @@ func perft_helper(t *testing.T, depth int, fen string) int {
 // It fails the test if the move is not found.
 //
 //nolint:unused
-func mustParseUCI_helper(t *testing.T, uci string) {
+func mustParseUCIHelper(t *testing.T, uci string) {
 	t.Helper()
 	_ = uci
 	// for _, m := range game.LegalMoves() {

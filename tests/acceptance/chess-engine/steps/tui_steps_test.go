@@ -552,7 +552,7 @@ func assertContainsPieces(t *testing.T, rendered string) {
 // Use it when the test does not expect the engine to be invoked.
 //
 //nolint:unused
-func noOpEngine_helper(t *testing.T) {
+func noOpEngineHelper(t *testing.T) {
 	t.Helper()
 	// return func(g chess.Game, tc engine.TimeControl) chess.Move {
 	//     t.Fatal("engine must not be called in this scenario")
